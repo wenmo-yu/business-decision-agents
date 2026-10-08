@@ -2,7 +2,7 @@
 
 这是一个面向品牌/平台招商运营团队的多智能体经营决策平台。它将**经独立问数服务校验的经营事实**、公开市场情报、内部经营资料和用户附件汇聚为一份可追溯的增长诊断与行动建议。
 
-它刻意不重复实现 Text-to-SQL：已有的「电商智能问数 Agent」专注自然语言到安全 SQL、Schema 混合检索与只读执行；商智罗盘通过受控 HTTP 合约消费它的结果，负责跨源取证、归因、证据审查和报告交付。
+它刻意不重复实现 Text-to-SQL：已有的「电商智能问数 Agent」专注自然语言到安全 SQL、Schema 混合检索与只读执行；本平台通过受控 HTTP 合约消费它的结果，负责跨源取证、归因、证据审查和报告交付。
 
 ## 产品闭环
 
@@ -16,9 +16,15 @@
              诊断归因、策略建议、Markdown / PDF 报告
 ```
 
+## 界面预览
+
+![多智能体经营决策平台：从任务拆解、跨源证据到行动建议的决策工作台](docs/showcase/dashboard-preview.png)
+
+> 预览图为静态产品原型，用于展示核心交互与信息架构；运行中的界面会实时展示子智能体调用、证据事件和报告产物。
+
 ## 与「电商智能问数 Agent」的边界
 
-| 能力 | 电商智能问数 Agent | 商智罗盘 |
+| 能力 | 电商智能问数 Agent | 多智能体经营决策平台 |
 | --- | --- | --- |
 | 目标 | 回答“指标是多少、按什么维度变化” | 回答“为什么发生、应做什么、证据是否充分” |
 | 数据访问 | Schema 检索、SQL 生成/校验、只读执行 | 仅调用问数服务，不连接业务库、不生成 SQL |
@@ -35,7 +41,7 @@
 
 ## 问数服务契约
 
-配置 `ECOM_ANALYTICS_API_URL` 后，商智罗盘会调用：
+配置 `ECOM_ANALYTICS_API_URL` 后，本平台会调用：
 
 ```text
 POST {ECOM_ANALYTICS_API_URL}/api/analytics/query
@@ -47,7 +53,7 @@ POST {ECOM_ANALYTICS_API_URL}/api/analytics/query
 {"question": "近 30 天女装品类 GMV 与转化率变化", "context": "可选的已知条件", "caller": "commerce_compass"}
 ```
 
-响应至少需要包含 `data` 与 `execution_status`；建议同时返回 `metric_definition`、`time_range`、`sql_audit` 与 `limitations`。商智罗盘只消费结果，绝不透传任意 SQL。
+响应至少需要包含 `data` 与 `execution_status`；建议同时返回 `metric_definition`、`time_range`、`sql_audit` 与 `limitations`。本平台只消费结果，绝不透传任意 SQL。
 
 ## 本地启动
 

@@ -16,6 +16,7 @@ frontend/dist/
 frontend/.vite/
 .pnpm-store/
 .npm-cache
+.edge-render-profile/
 .angular/
 
 # Python

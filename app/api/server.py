@@ -48,7 +48,7 @@ async def lifespan(_app: FastAPI):
 current_dir = Path(__file__).resolve().parent
 project_root = current_dir.parent
 
-app = FastAPI(title="Commerce Compass API", lifespan=lifespan)
+app = FastAPI(title="多智能体经营决策平台 API", lifespan=lifespan)
 
 # 保存 thread_id -> 后台 Agent 任务，用于同一会话任务替换和主动取消
 active_tasks: dict[str, asyncio.Task] = {}

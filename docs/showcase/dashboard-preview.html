@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>多智能体经营决策平台 · 界面预览</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 1440px; background: #07111f; color: #e7eefb; font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .shell { display: grid; grid-template-columns: 290px 1fr; min-height: 900px; }
+      aside { padding: 36px 25px; background: linear-gradient(180deg, #0c1b31, #07111f); border-right: 1px solid #203451; }
+      .eyebrow { color: #64e4bd; letter-spacing: 2px; font-size: 12px; font-weight: 700; }
+      h1 { margin: 14px 0 6px; font-size: 28px; line-height: 1.2; }
+      .muted { color: #92a5c2; font-size: 14px; line-height: 1.65; }
+      .new { width: 100%; margin: 28px 0; padding: 13px; border: 0; border-radius: 10px; background: #58d8ae; color: #062017; font-weight: 700; font-size: 14px; }
+      .side-title { margin: 28px 0 12px; color: #6f89ad; font-size: 11px; letter-spacing: 1.5px; }
+      .agent { display: flex; gap: 11px; align-items: center; padding: 11px 4px; color: #d9e7f9; font-size: 14px; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: #5de0b8; box-shadow: 0 0 10px #5de0b8; }
+      .dot.blue { background: #69b8ff; box-shadow: 0 0 10px #69b8ff; }.dot.orange { background: #f7ba72; box-shadow: 0 0 10px #f7ba72; }.dot.violet { background: #ad91f7; box-shadow: 0 0 10px #ad91f7; }
+      .stat { display: flex; justify-content: space-between; padding: 11px 0; border-bottom: 1px solid #1b2d48; color: #91a5c3; font-size: 13px; }.stat strong { color: #eef5ff; }
+      main { padding: 33px 42px; background: radial-gradient(circle at 74% 3%, #173a55 0%, #091625 40%, #07111f 100%); }
+      header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 26px; border-bottom: 1px solid #213652; } h2 { margin: 7px 0 0; font-size: 22px; } .status { padding: 8px 13px; border: 1px solid #3b9079; border-radius: 99px; color: #66e9c1; font-size: 13px; }
+      .grid { display: grid; grid-template-columns: 1.25fr .75fr; gap: 20px; margin-top: 25px; }.card { background: rgba(13, 31, 53, .88); border: 1px solid #294460; border-radius: 14px; padding: 22px; box-shadow: 0 14px 32px rgba(0,0,0,.18); }
+      .card h3 { margin: 0 0 16px; font-size: 15px; }.question { padding: 15px; border-left: 3px solid #56d4ab; background: #10253e; border-radius: 7px; color: #eaf3ff; line-height: 1.65; font-size: 15px; }
+      .flow { display: flex; align-items: stretch; gap: 8px; margin-top: 18px; }.node { flex: 1; min-height: 92px; padding: 13px; border-radius: 10px; border: 1px solid #2d506f; background: #0e223a; font-size: 12px; }.node b { display:block; margin-bottom: 7px; color: #cfe6ff; font-size: 13px; }.arrow { align-self: center; color: #4f7a9e; font-size: 18px; }
+      .evidence { display: grid; gap: 10px; }.evidence-item { padding: 12px; border-radius: 9px; background: #0d2138; border: 1px solid #213f5b; }.tag { display: inline-block; padding: 3px 7px; margin-right: 7px; color: #63dec0; background: #123c3b; border-radius: 4px; font-size: 11px; }.tag.data { color:#91c8ff; background:#163755 }.tag.review { color:#e5c287; background:#49391d }.title { font-weight: 650; font-size: 13px; }.small { margin-top: 7px; color: #8da4c1; font-size: 12px; }
+      .result { grid-column: 1 / -1; }.columns { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:14px; }.insight { padding: 15px; min-height: 128px; border-radius: 10px; background: #0e233b; border-top: 2px solid #59d2aa; }.insight.warning { border-top-color:#efb762 }.insight h4 { margin:0 0 8px; font-size:14px; }.insight p { margin:0; color:#9cb0c9; font-size:13px; line-height:1.6; }
+      footer { margin-top: 19px; text-align:right; color:#5e7898; font-size:12px; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <div class="eyebrow">MULTI-AGENT DECISION</div><h1>多智能体<br />经营决策平台</h1><p class="muted">从经营异常到策略落地的可追溯决策工作台</p>
+        <button class="new">+ 新建经营诊断</button>
+        <div class="side-title">AGENT NETWORK</div>
+        <div class="agent"><i class="dot"></i>市场情报助手</div><div class="agent"><i class="dot blue"></i>经营问数助手</div><div class="agent"><i class="dot orange"></i>经营知识助手</div><div class="agent"><i class="dot violet"></i>证据审查助手</div>
+        <div class="side-title">RUN STATUS</div><div class="stat"><span>数据事实</span><strong>12</strong></div><div class="stat"><span>公开来源</span><strong>8</strong></div><div class="stat"><span>待验证项</span><strong>2</strong></div>
+      </aside>
+      <main>
+        <header><div><div class="eyebrow">DECISION WORKSPACE</div><h2>女装品类 GMV 下滑诊断</h2></div><div class="status">● 证据审查完成</div></header>
+        <div class="grid">
+          <section class="card"><h3>问题与协作路径</h3><div class="question">近 30 天女装品类 GMV 下滑，判断主要原因并给出按优先级排序的行动建议。</div><div class="flow"><div class="node"><b>01 经营问数</b>GMV、转化率、客单价及渠道拆分</div><div class="arrow">→</div><div class="node"><b>02 市场情报</b>竞品促销、平台规则与趋势信号</div><div class="arrow">→</div><div class="node"><b>03 证据审查</b>来源覆盖、时效与不确定性</div></div></section>
+          <section class="card"><h3>证据链</h3><div class="evidence"><div class="evidence-item"><span class="tag data">经营数据</span><span class="title">转化率环比下降 2.4pp</span><div class="small">近 30 天 · 问数服务已校验 · 口径：支付转化率</div></div><div class="evidence-item"><span class="tag">公开来源</span><span class="title">主要竞品启动限时满减活动</span><div class="small">公开活动页 · 2026-10-04 · 已保留链接</div></div><div class="evidence-item"><span class="tag review">待验证</span><span class="title">直播流量结构变化</span><div class="small">需要补充投放渠道与主播场次数据</div></div></div></section>
+          <section class="card result"><h3>诊断结论与行动建议</h3><div class="columns"><div class="insight"><h4>核心归因</h4><p>转化率下降是 GMV 下滑的主要直接因素；竞品短期促销与商品详情页流失共同放大影响。</p></div><div class="insight"><h4>优先动作</h4><p>48 小时内完成重点 SKU 的价格带复核与详情页转化实验，并按渠道监测增量效果。</p></div><div class="insight warning"><h4>风险与待验证项</h4><p>目前缺少直播渠道场次级数据。该因素仅作为待验证假设，不纳入确定性结论。</p></div></div></section>
+        </div>
+        <footer>多智能体经营决策平台 · Evidence-aware decision workflow</footer>
+      </main>
+    </div>
+  </body>
+</html>
