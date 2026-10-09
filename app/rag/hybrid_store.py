@@ -13,6 +13,8 @@ from langchain_openai import OpenAIEmbeddings
 
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".pdf", ".docx"}
+RRF_K = 60
+LEXICAL_SCHEMA_VERSION = "2"
 
 
 class HybridKnowledgeBase:
@@ -32,7 +34,7 @@ class HybridKnowledgeBase:
 
     def _initialize(self) -> None:
         with closing(self._connect()) as connection, connection:
-            connection.executescript(
+            connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS chunks (
                     id INTEGER PRIMARY KEY,
@@ -42,11 +44,23 @@ class HybridKnowledgeBase:
                     embedding TEXT NOT NULL,
                     metadata TEXT NOT NULL,
                     UNIQUE(source, chunk_index)
-                );
-                CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
-                    USING fts5(content, source, tokenize='unicode61');
+                )
                 """
             )
+            connection.execute("CREATE TABLE IF NOT EXISTS rag_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            version = connection.execute("SELECT value FROM rag_meta WHERE key = 'lexical_schema_version'").fetchone()
+            if version is None or version["value"] != LEXICAL_SCHEMA_VERSION:
+                connection.execute("DROP TABLE IF EXISTS chunks_fts")
+                connection.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(content, source, tokenize='unicode61')")
+                for row in connection.execute("SELECT id, content, source FROM chunks"):
+                    connection.execute(
+                        "INSERT INTO chunks_fts(rowid, content, source) VALUES (?, ?, ?)",
+                        (row["id"], self._lexical_text(row["content"]), row["source"]),
+                    )
+                connection.execute(
+                    "INSERT INTO rag_meta(key, value) VALUES ('lexical_schema_version', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (LEXICAL_SCHEMA_VERSION,),
+                )
 
     def _embedder(self) -> OpenAIEmbeddings:
         api_key = os.getenv("OPENAI_API_KEY")
@@ -75,6 +89,28 @@ class HybridKnowledgeBase:
                 break
             start = end - overlap
         return result
+
+    @staticmethod
+    def _lexical_tokens(text: str) -> list[str]:
+        """统一处理中英文：中文使用字/双字 n-gram，英文保留完整词。"""
+        tokens: list[str] = []
+        for chinese_run, latin_word in re.findall(r"([\u4e00-\u9fff]+)|([A-Za-z0-9_]+)", text.lower()):
+            if chinese_run:
+                tokens.extend(chinese_run)
+                tokens.extend(chinese_run[index : index + 2] for index in range(len(chinese_run) - 1))
+            elif latin_word:
+                tokens.append(latin_word)
+        return tokens
+
+    @classmethod
+    def _lexical_text(cls, text: str) -> str:
+        return " ".join(cls._lexical_tokens(text))
+
+    @classmethod
+    def _fts_query(cls, text: str) -> str:
+        # 使用 OR 扩大中文 n-gram 召回面；RRF 在候选集合上再融合并排序。
+        tokens = list(dict.fromkeys(cls._lexical_tokens(text)))[:32]
+        return " OR ".join(f'"{token}"' for token in tokens)
 
     @staticmethod
     def read_document(path: Path) -> str:
@@ -114,7 +150,10 @@ class HybridKnowledgeBase:
                     (source, chunk_index, content, json.dumps(vector), json.dumps({"source": source, "chunk_index": chunk_index})),
                 )
                 chunk_id = cursor.lastrowid
-                connection.execute("INSERT INTO chunks_fts(rowid, content, source) VALUES (?, ?, ?)", (chunk_id, content, source))
+                connection.execute(
+                    "INSERT INTO chunks_fts(rowid, content, source) VALUES (?, ?, ?)",
+                    (chunk_id, self._lexical_text(content), source),
+                )
         return {"documents": len({item[0] for item in documents}), "chunks": len(documents)}
 
     @staticmethod
@@ -124,16 +163,33 @@ class HybridKnowledgeBase:
 
     def search(self, query: str, limit: int = 5) -> list[dict]:
         query_vector = self._embedder().embed_query(query)
-        terms = " ".join(re.findall(r"[\w\u4e00-\u9fff]+", query))
         with closing(self._connect()) as connection:
             rows = connection.execute("SELECT * FROM chunks").fetchall()
+            fts_query = self._fts_query(query)
             lexical_rows = connection.execute(
-                "SELECT rowid, bm25(chunks_fts) AS score FROM chunks_fts WHERE chunks_fts MATCH ? LIMIT 20", (terms or query,)
-            ).fetchall()
-        lexical = {row["rowid"]: 1 / (1 + abs(row["score"])) for row in lexical_rows}
+                """SELECT rowid, bm25(chunks_fts) AS bm25_score
+                FROM chunks_fts
+                WHERE chunks_fts MATCH ?
+                ORDER BY bm25_score ASC
+                LIMIT ?""",
+                (fts_query, 50),
+            ).fetchall() if fts_query else []
+
+        semantic_ranked = sorted(
+            ((row["id"], self._cosine(query_vector, json.loads(row["embedding"]))) for row in rows),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:50]
+        semantic_ranks = {chunk_id: rank for rank, (chunk_id, _) in enumerate(semantic_ranked, start=1)}
+        semantic_scores = dict(semantic_ranked)
+        lexical_ranks = {row["rowid"]: rank for rank, row in enumerate(lexical_rows, start=1)}
+        candidates = set(semantic_ranks) | set(lexical_ranks)
+        rows_by_id = {row["id"]: row for row in rows}
         results = []
-        for row in rows:
-            semantic = self._cosine(query_vector, json.loads(row["embedding"]))
-            hybrid_score = 0.7 * semantic + 0.3 * lexical.get(row["id"], 0.0)
-            results.append({"source": row["source"], "chunk_index": row["chunk_index"], "content": row["content"], "score": round(hybrid_score, 4), "semantic_score": round(semantic, 4), "lexical_score": round(lexical.get(row["id"], 0.0), 4)})
-        return sorted(results, key=lambda item: item["score"], reverse=True)[:limit]
+        for chunk_id in candidates:
+            row = rows_by_id[chunk_id]
+            semantic_rank = semantic_ranks.get(chunk_id)
+            lexical_rank = lexical_ranks.get(chunk_id)
+            rrf_score = (1 / (RRF_K + semantic_rank) if semantic_rank else 0) + (1 / (RRF_K + lexical_rank) if lexical_rank else 0)
+            results.append({"source": row["source"], "chunk_index": row["chunk_index"], "content": row["content"], "rrf_score": round(rrf_score, 6), "semantic_rank": semantic_rank, "lexical_rank": lexical_rank, "semantic_score": round(semantic_scores.get(chunk_id, 0.0), 4) if semantic_rank else None})
+        return sorted(results, key=lambda item: item["rrf_score"], reverse=True)[:limit]

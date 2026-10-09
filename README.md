@@ -48,9 +48,9 @@ PDF / DOCX / Markdown / TXT
         ↓ 文档解析与重叠分块
 OpenAI 兼容 Embedding → SQLite 持久化向量
         ↓                         ↓
-SQLite FTS5 / BM25 词法召回 ← 语义余弦召回
+中文字符 n-gram + SQLite FTS5 / BM25 词法召回 ← 语义余弦召回
         ↓
-0.7 × 语义分数 + 0.3 × 词法分数融合排序
+基于排名的 Reciprocal Rank Fusion（RRF）融合排序
         ↓
 来源文件、分块编号、原文证据、融合分数
 ```
@@ -61,7 +61,7 @@ SQLite FTS5 / BM25 词法召回 ← 语义余弦召回
 uv run python -m app.rag.indexer docs/knowledge_base
 ```
 
-索引默认保存在 `app/data/knowledge.db`，已被 `.gitignore` 排除。通过 `RAG_DB_PATH` 可改为部署环境中的持久化路径；通过 `RAG_EMBEDDING_MODEL` 指定 OpenAI 兼容的嵌入模型。
+索引默认保存在 `app/data/knowledge.db`，已被 `.gitignore` 排除。通过 `RAG_DB_PATH` 可改为部署环境中的持久化路径；通过 `RAG_EMBEDDING_MODEL` 指定 OpenAI 兼容的嵌入模型。中文文本在入库和查询两端统一生成单字和双字 n-gram，避免 `unicode61` 把连续中文当作单一 token；词法与语义候选分别按各自排名进入 RRF，因此不会对 FTS5 的负向 BM25 原始分数做错误归一化。
 
 ## 问数服务契约
 
