@@ -28,16 +28,40 @@
 | --- | --- | --- |
 | 目标 | 回答“指标是多少、按什么维度变化” | 回答“为什么发生、应做什么、证据是否充分” |
 | 数据访问 | Schema 检索、SQL 生成/校验、只读执行 | 仅调用问数服务，不连接业务库、不生成 SQL |
-| 核心技术 | LangGraph、Qdrant、Elasticsearch、MySQL | DeepAgents 多智能体、FastAPI、WebSocket、Tavily、RAGFlow、证据规则引擎 |
+| 核心技术 | LangGraph、Qdrant、Elasticsearch、MySQL | DeepAgents 多智能体、FastAPI、WebSocket、Tavily、自建 Hybrid RAG、证据规则引擎 |
 | 产物 | 可审计的数据答案 | 跨源证据链、增长诊断、行动清单、Markdown/PDF 报告 |
 
 ## 多智能体设计
 
 - **市场情报助手**：采集竞品动作、平台规则、行业趋势和公开用户反馈，保留 URL 与发布时间。
 - **经营问数助手**：调用已部署的问数服务，要求返回指标口径、时间范围、执行状态与 SQL 审计摘要；服务边界确保本项目没有直接 SQL 执行能力。
-- **经营知识助手**：从企业内部策略、活动复盘、商品资料等材料获取组织上下文。
+- **经营知识助手**：从平台自建 Hybrid RAG 检索企业内部策略、活动复盘和商品资料；每条证据保留文件名、分块编号和融合分数。
 - **证据审查助手**：在出结论前用确定性规则检查来源类型、URL、时间范围和缺失证据，避免“有结论无依据”。
 - **编排主智能体**：负责假设拆解、选择性路由、归因和报告生成；不把不充分的证据表述为事实。
+
+## 内置 Hybrid RAG
+
+知识库不依赖 RAGFlow 或第三方 RAG 平台，由应用自身维护完整链路：
+
+```text
+PDF / DOCX / Markdown / TXT
+        ↓ 文档解析与重叠分块
+OpenAI 兼容 Embedding → SQLite 持久化向量
+        ↓                         ↓
+SQLite FTS5 / BM25 词法召回 ← 语义余弦召回
+        ↓
+0.7 × 语义分数 + 0.3 × 词法分数融合排序
+        ↓
+来源文件、分块编号、原文证据、融合分数
+```
+
+将内部资料放入任意目录后建立索引：
+
+```bash
+uv run python -m app.rag.indexer docs/knowledge_base
+```
+
+索引默认保存在 `app/data/knowledge.db`，已被 `.gitignore` 排除。通过 `RAG_DB_PATH` 可改为部署环境中的持久化路径；通过 `RAG_EMBEDDING_MODEL` 指定 OpenAI 兼容的嵌入模型。
 
 ## 问数服务契约
 
@@ -58,7 +82,7 @@ POST {ECOM_ANALYTICS_API_URL}/api/analytics/query
 ## 本地启动
 
 1. 安装后端：`uv sync`
-2. 复制 `.env.example` 为 `.env`，配置模型、Tavily、RAGFlow 和问数服务地址。
+2. 复制 `.env.example` 为 `.env`，配置模型、Tavily、内置 Hybrid RAG 的 Embedding 模型和问数服务地址。
 3. 启动 API：`uv run uvicorn app.api.server:app --host 0.0.0.0 --port 8000 --reload`
 4. 启动前端：`cd frontend && pnpm install && pnpm dev`
 
