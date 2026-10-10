@@ -7,7 +7,7 @@ WebSocket 长连接。HTTP 接口只做轻量调度，真正的 DeepAgents 执�
 """
 
 import asyncio
-import shutil
+import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,6 +29,12 @@ from pydantic import BaseModel
 
 from app.agent.main_agent import run_deep_agent
 from app.api.monitor import manager
+from app.rag.hybrid_store import HybridKnowledgeBase
+from app.rag.session_store import session_database_path
+
+THREAD_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+ALLOWED_UPLOAD_SUFFIXES = {".txt", ".md", ".pdf", ".docx", ".xlsx", ".xls"}
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -78,6 +84,12 @@ class TaskRequest(BaseModel):
     thread_id: str = None
 
 
+def _validate_thread_id(thread_id: str) -> str:
+    if not THREAD_ID_PATTERN.fullmatch(thread_id):
+        raise HTTPException(status_code=400, detail="无效的会话 ID")
+    return thread_id
+
+
 def _forget_task(thread_id: str, task: asyncio.Task) -> None:
     """
     清理已结束任务的登记关系。
@@ -97,7 +109,7 @@ async def run_task(request: TaskRequest):
     HTTP 请求只负责创建后台协程并立即返回，后续执行轨迹、子智能体调用和最终
     答案都会由 monitor 通过 `/ws/{thread_id}` 推送给同一会话的前端。
     """
-    thread_id = request.thread_id or str(uuid.uuid4())
+    thread_id = _validate_thread_id(request.thread_id or str(uuid.uuid4()))
 
     # 同一个 thread_id 只保留一个活跃任务，新任务会先取消旧任务，避免并发写同一会话目录
     old_task = active_tasks.get(thread_id)
@@ -120,6 +132,7 @@ async def cancel_task(thread_id: str):
     注意：取消会向 asyncio.Task 注入 CancelledError。若底层第三方工具正在执行不可中断
     的同步阻塞调用，任务可能需要等该调用返回后才会真正结束。
     """
+    thread_id = _validate_thread_id(thread_id)
     task = active_tasks.get(thread_id)
     if not task or task.done():
         active_tasks.pop(thread_id, None)
@@ -157,18 +170,40 @@ async def upload_files(files: List[UploadFile] = File(...), thread_id: str = For
         thread_id (str): 关联的任务会话 ID。
     """
     # 上传文件先按会话隔离保存，避免不同任务读取到彼此的附件
-    target_dir = updated_dir / f"session_{thread_id}"
+    thread_id = _validate_thread_id(thread_id)
+    target_dir = (updated_dir / f"session_{thread_id}").resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
 
     saved_files = []
+    index_errors = []
     for file in files:
-        file_path = target_dir / file.filename
-        # 直接复制文件流，避免大文件一次性读入内存
+        filename = Path(file.filename or "").name
+        if not filename or filename != file.filename or Path(filename).suffix.lower() not in ALLOWED_UPLOAD_SUFFIXES:
+            raise HTTPException(status_code=400, detail="不支持或不安全的文件名/类型")
+        file_path = (target_dir / filename).resolve()
+        if not file_path.is_relative_to(target_dir):
+            raise HTTPException(status_code=400, detail="非法上传路径")
+        written = 0
         with file_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        saved_files.append(file.filename)
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    file_path.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail="单个文件不能超过 20MB")
+                buffer.write(chunk)
+        saved_files.append(filename)
 
-    return {"status": "uploaded", "files": saved_files}
+        try:
+            await asyncio.to_thread(
+                HybridKnowledgeBase(str(session_database_path(thread_id))).index_paths,
+                [file_path],
+                {file_path: filename},
+            )
+        except Exception as error:
+            # 上传本身可用，索引失败则显式返回，避免虚假宣称附件已可 RAG 检索。
+            index_errors.append({"file": filename, "error": str(error)})
+
+    return {"status": "uploaded", "files": saved_files, "rag_indexed": len(saved_files) - len(index_errors), "rag_index_errors": index_errors}
 
 
 @app.get("/api/download")

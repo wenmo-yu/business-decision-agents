@@ -2,6 +2,7 @@
 
 import json
 from typing import Any
+from urllib.parse import urlparse
 
 from langchain_core.tools import tool
 
@@ -38,9 +39,23 @@ def evaluate_evidence(claims_json: str) -> str:
                 continue
             source_type = source["type"]
             types.add(source_type)
-            if source_type == "公开来源" and not source.get("url"):
-                issues.append("公开来源缺少 URL")
-            if source_type == "经营数据" and not source.get("time_range"):
-                issues.append("经营数据缺少时间范围")
-        review.append({"claim_index": index, "source_count": len(sources), "source_types": sorted(types), "status": "needs_evidence" if issues else "traceable", "issues": sorted(set(issues))})
+            if source_type == "公开来源":
+                url = str(source.get("url", ""))
+                if urlparse(url).scheme not in {"http", "https"} or not urlparse(url).netloc:
+                    issues.append("公开来源缺少有效 URL")
+                if not source.get("published_at"):
+                    issues.append("公开来源缺少发布日期")
+            if source_type == "经营数据":
+                if not source.get("time_range"):
+                    issues.append("经营数据缺少时间范围")
+                if not source.get("metric_definition"):
+                    issues.append("经营数据缺少指标口径")
+            if source_type == "内部材料":
+                if not source.get("source"):
+                    issues.append("内部材料缺少来源文件")
+                if not isinstance(source.get("chunk_index"), int):
+                    issues.append("内部材料缺少分块编号")
+                if not source.get("content_excerpt"):
+                    issues.append("内部材料缺少原文摘录")
+        review.append({"claim_index": index, "source_count": len(sources), "source_types": sorted(types), "status": "needs_evidence" if issues else "citation_complete", "issues": sorted(set(issues))})
     return json.dumps({"review": review}, ensure_ascii=False)

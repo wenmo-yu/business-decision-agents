@@ -73,6 +73,22 @@ class HybridKnowledgeBase:
         )
 
     @staticmethod
+    def _embedding_model() -> str:
+        return os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-v4")
+
+    def _validate_embedding_contract(self, dimension: int) -> None:
+        """拒绝将不同模型或不同维度的向量混在同一个索引中。"""
+        with closing(self._connect()) as connection, connection:
+            values = dict(connection.execute("SELECT key, value FROM rag_meta WHERE key IN ('embedding_model', 'embedding_dimension')"))
+            has_chunks = connection.execute("SELECT EXISTS(SELECT 1 FROM chunks)").fetchone()[0]
+            model = self._embedding_model()
+            previous_dimension = values.get("embedding_dimension")
+            if has_chunks and values and (values.get("embedding_model") != model or previous_dimension != str(dimension)):
+                raise ValueError("Embedding 模型或向量维度已变化；请删除旧索引后重新构建知识库。")
+            connection.execute("INSERT INTO rag_meta(key, value) VALUES ('embedding_model', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (model,))
+            connection.execute("INSERT INTO rag_meta(key, value) VALUES ('embedding_dimension', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(dimension),))
+
+    @staticmethod
     def _chunks(text: str, chunk_size: int = 800, overlap: int = 120) -> list[str]:
         normalized = re.sub(r"\n{3,}", "\n\n", text).strip()
         if not normalized:
@@ -125,21 +141,26 @@ class HybridKnowledgeBase:
             return "\n".join(paragraph.text for paragraph in docx.Document(path).paragraphs)
         raise ValueError(f"不支持的文档格式：{path.suffix}")
 
-    def index_paths(self, paths: Iterable[Path]) -> dict[str, int]:
+    def index_paths(self, paths: Iterable[Path], source_names: dict[Path, str] | None = None) -> dict[str, int]:
         documents = []
+        indexed_sources: set[str] = set()
         for path in paths:
             if path.suffix.lower() not in SUPPORTED_SUFFIXES:
                 continue
+            source = (source_names or {}).get(path, str(path).replace("\\", "/"))
+            indexed_sources.add(source)
             content = self.read_document(path)
             for index, chunk in enumerate(self._chunks(content)):
-                documents.append((str(path).replace("\\", "/"), index, chunk))
-        if not documents:
+                documents.append((source, index, chunk))
+        if not indexed_sources:
             return {"documents": 0, "chunks": 0}
 
-        vectors = self._embedder().embed_documents([item[2] for item in documents])
+        vectors = self._embedder().embed_documents([item[2] for item in documents]) if documents else []
+        if vectors:
+            self._validate_embedding_contract(len(vectors[0]))
         with closing(self._connect()) as connection, connection:
-            # 同一文件重新索引时先清除旧分块，避免文档缩短后遗留过期证据。
-            for source in {item[0] for item in documents}:
+            # 即使文件为空也先清理旧分块，避免旧证据继续被召回。
+            for source in indexed_sources:
                 existing = connection.execute("SELECT id FROM chunks WHERE source = ?", (source,)).fetchall()
                 for row in existing:
                     connection.execute("DELETE FROM chunks_fts WHERE rowid = ?", (row["id"],))
@@ -154,7 +175,7 @@ class HybridKnowledgeBase:
                     "INSERT INTO chunks_fts(rowid, content, source) VALUES (?, ?, ?)",
                     (chunk_id, self._lexical_text(content), source),
                 )
-        return {"documents": len({item[0] for item in documents}), "chunks": len(documents)}
+        return {"documents": len(indexed_sources), "chunks": len(documents)}
 
     @staticmethod
     def _cosine(left: list[float], right: list[float]) -> float:
@@ -163,6 +184,7 @@ class HybridKnowledgeBase:
 
     def search(self, query: str, limit: int = 5) -> list[dict]:
         query_vector = self._embedder().embed_query(query)
+        self._validate_embedding_contract(len(query_vector))
         with closing(self._connect()) as connection:
             rows = connection.execute("SELECT * FROM chunks").fetchall()
             fts_query = self._fts_query(query)
@@ -192,4 +214,10 @@ class HybridKnowledgeBase:
             lexical_rank = lexical_ranks.get(chunk_id)
             rrf_score = (1 / (RRF_K + semantic_rank) if semantic_rank else 0) + (1 / (RRF_K + lexical_rank) if lexical_rank else 0)
             results.append({"source": row["source"], "chunk_index": row["chunk_index"], "content": row["content"], "rrf_score": round(rrf_score, 6), "semantic_rank": semantic_rank, "lexical_rank": lexical_rank, "semantic_score": round(semantic_scores.get(chunk_id, 0.0), 4) if semantic_rank else None})
-        return sorted(results, key=lambda item: item["rrf_score"], reverse=True)[:limit]
+        ranked = sorted(results, key=lambda item: item["rrf_score"], reverse=True)
+        if not ranked:
+            return []
+        # RRF 是排序分数而不是置信度。无词法命中且最优语义相似度偏低时拒答。
+        if not any(item["lexical_rank"] for item in ranked) and (ranked[0]["semantic_score"] or 0) < float(os.getenv("RAG_MIN_SEMANTIC_SCORE", "0.35")):
+            return []
+        return ranked[:limit]

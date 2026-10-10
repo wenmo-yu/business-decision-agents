@@ -63,21 +63,27 @@ uv run python -m app.rag.indexer docs/knowledge_base
 
 索引默认保存在 `app/data/knowledge.db`，已被 `.gitignore` 排除。通过 `RAG_DB_PATH` 可改为部署环境中的持久化路径；通过 `RAG_EMBEDDING_MODEL` 指定 OpenAI 兼容的嵌入模型。中文文本在入库和查询两端统一生成单字和双字 n-gram，避免 `unicode61` 把连续中文当作单一 token；词法与语义候选分别按各自排名进入 RRF，因此不会对 FTS5 的负向 BM25 原始分数做错误归一化。
 
-## 问数服务契约
+RRF 仅用于排序，不作为“可回答置信度”。当没有词法命中且最优语义相似度低于 `RAG_MIN_SEMANTIC_SCORE`（默认 `0.35`）时，知识助手会返回“证据不足”。索引还记录 Embedding 模型和向量维度；两者变更时会拒绝混用旧向量，要求重建索引。
 
-配置 `ECOM_ANALYTICS_API_URL` 后，本平台会调用：
+用户上传附件会自动建立独立的会话级索引，位于 `app/data/sessions/{thread_id}.db`。知识助手只合并全局知识库和当前会话索引，不会检索其他会话附件。
+
+## 问数服务集成
+
+默认对接现有问数项目的 SSE 接口：
 
 ```text
-POST {ECOM_ANALYTICS_API_URL}/api/analytics/query
+POST {ECOM_ANALYTICS_API_URL}/api/query
 ```
 
 请求体：
 
 ```json
-{"question": "近 30 天女装品类 GMV 与转化率变化", "context": "可选的已知条件", "caller": "commerce_compass"}
+{"query": "近 30 天女装品类 GMV 与转化率变化", "session_id": "当前会话 ID"}
 ```
 
-响应至少需要包含 `data` 与 `execution_status`；建议同时返回 `metric_definition`、`time_range`、`sql_audit` 与 `limitations`。本平台只消费结果，绝不透传任意 SQL。
+适配器会收集 SSE 事件，并对事件内的数据结构做有界截断，保证返回内容始终是合法 JSON；SSE 中的 `error` 事件会被判定为失败，不能作为经营事实使用。当前 SSE 协议未提供标准化的最终结果、时间范围或 SQL 审计字段，因此适配器会明确标记该限制。
+
+当问数项目新增 JSON 汇总端点后，可设置 `ECOM_ANALYTICS_PROTOCOL=json`，并实现 `POST /api/analytics/query`，返回 `data`、`execution_status`、`metric_definition`、`time_range`、`sql_audit` 与 `limitations`。无论哪种协议，平台均不透传或执行 SQL。
 
 ## 本地启动
 
