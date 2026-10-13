@@ -39,6 +39,45 @@
 - **证据审查助手**：在出结论前用确定性规则检查来源类型、URL、时间范围和缺失证据，避免“有结论无依据”。
 - **编排主智能体**：负责假设拆解、选择性路由、归因和报告生成；不把不充分的证据表述为事实。
 
+## 上下文工程、预算调度与轨迹评测
+
+平台将“调用多个 Agent”收敛为可执行的协作契约，而不是把所有历史、网页和工具输出无差别塞入模型上下文：
+
+```text
+跨源经营问题
+        ↓
+parallel_research（TaskGroup 并发）
+市场情报 ─┬─ 经营问数 ─┬─ 内部 Hybrid RAG
+          └── 各自产生 evidence_id 与原始 artifact ──┘
+                              ↓
+               仅回传有上限的结构化高信号摘要
+                              ↓
+       证据审查：完整度 → 结论级支持关系 → 最终报告
+```
+
+- 无依赖的市场、问数、知识检索由 `asyncio.TaskGroup` 并发；证据审查明确依赖三类证据完成后再执行。
+- 每个专家工具调用前都会检查最大次数、总时限和可回传上下文预算；超额调用由程序拒绝，不依赖提示词“节约 Token”。Token 是本地保守估算，用于约束而非冒充模型厂商计费。
+- 原始网页、SSE 事件与分块写入 `output/session_<id>/artifacts/`；主 Agent 只收到截断后的结构化摘要及 `evidence_id`。每轮还写入 `trace.jsonl`，记录专家调用、预算拒绝与证据登记事件。
+- 结论审查同时提供 `evaluate_evidence`（引用字段完整度）与 `verify_claim_support`（真实 evidence_id、原文引文、数值可核对性、因果结论降级）。`direct` 只代表原文引用与数值可定位，绝不把共现写成因果证明。
+
+运行预算可在 `.env` 中调整：
+
+```dotenv
+AGENT_MAX_EXPERT_CALLS=8
+AGENT_MAX_CONTEXT_TOKENS=12000
+AGENT_MAX_WALL_TIME_SECONDS=180
+```
+
+### 轨迹评测
+
+`app/evals` 提供无需人工主观打分的第一层可复现评测：检查任务期望的专家是否实际调用、是否出现预算拒绝、是否产生可引用证据，以及是否真正完成结论级审查并分布到 `direct / partial / conflicting / insufficient`。运行一次任务后，可执行：
+
+```bash
+uv run python -m app.evals.runner --trace output/session_<session_id>/trace.jsonl --cases tests/fixtures/eval_cases.jsonl --output artifacts/eval-result.json
+```
+
+后续可将人工标注的“结论—证据支持关系”加入 JSONL，统计引用支持准确率、关键结论覆盖率和无依据断言比例；当前仓库不会把该类尚未标注的指标写成已经达成的数值。
+
 ## 内置 Hybrid RAG
 
 知识库不依赖 RAGFlow 或第三方 RAG 平台，由应用自身维护完整链路：

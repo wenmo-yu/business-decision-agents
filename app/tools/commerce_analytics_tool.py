@@ -9,6 +9,7 @@ from langchain_core.tools import tool
 
 from app.api.context import get_thread_context
 from app.api.monitor import monitor
+from app.context_engineering.runtime import BudgetExceeded, record_expert_result, reserve_expert_call
 
 
 SUCCESS_STATUSES = {"success", "succeeded", "completed", "ok"}
@@ -62,6 +63,7 @@ def commerce_analytics_query(question: str, context: str = "") -> str:
         return "经营问数服务未配置。请设置 ECOM_ANALYTICS_API_URL。"
 
     try:
+        reserve_expert_call("commerce_analytics", f"{question}\n{context}")
         if protocol == "sse":
             response = requests.post(f"{base_url}/api/query", json={"query": question, "session_id": get_thread_context() or "decision-platform"}, headers={"Accept": "text/event-stream"}, stream=True, timeout=float(os.getenv("ECOM_ANALYTICS_TIMEOUT_SECONDS", "60")))
             response.raise_for_status()
@@ -80,11 +82,15 @@ def commerce_analytics_query(question: str, context: str = "") -> str:
             payload["truncated"] = truncated
         else:
             return "ECOM_ANALYTICS_PROTOCOL 仅支持 sse 或 json。"
-    except requests.RequestException as error:
+    except (requests.RequestException, BudgetExceeded) as error:
         return f"经营问数服务调用失败：{error}"
     except ValueError:
         return "经营问数服务返回了非 JSON 响应。"
 
     if payload["execution_status"] != "completed":
         return f"经营问数服务执行失败：{payload.get('error', payload['execution_status'])}"
-    return json.dumps(payload, ensure_ascii=False, default=str)
+    evidence_id, compact, truncated = record_expert_result("commerce_analytics", payload, "经营数据")
+    if isinstance(compact, dict):
+        compact["evidence_id"] = evidence_id
+        compact["context_truncated"] = truncated
+    return json.dumps(compact, ensure_ascii=False, default=str)

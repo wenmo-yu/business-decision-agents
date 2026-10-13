@@ -6,6 +6,7 @@ from langchain_core.tools import tool
 
 from app.api.context import get_thread_context
 from app.api.monitor import monitor
+from app.context_engineering.runtime import BudgetExceeded, record_expert_result, reserve_expert_call
 from app.rag.hybrid_store import HybridKnowledgeBase
 from app.rag.session_store import session_database_path
 
@@ -15,6 +16,7 @@ def search_internal_knowledge(question: str, limit: int = 5) -> str:
     """从平台自建知识库检索内部资料并返回附来源、分块号和融合分数的原始证据。"""
     monitor.report_tool("内部 Hybrid RAG 检索", {"question": question, "limit": limit})
     try:
+        reserve_expert_call("knowledge_base", question)
         result_limit = max(1, min(limit, 8))
         evidence = [{**item, "scope": "global"} for item in HybridKnowledgeBase().search(question, limit=result_limit)]
         thread_id = get_thread_context()
@@ -25,6 +27,13 @@ def search_internal_knowledge(question: str, limit: int = 5) -> str:
         evidence = evidence[:result_limit]
         if not evidence:
             return "没有找到足够相关的内部知识证据。请补充资料或调整问题。"
-        return json.dumps({"query": question, "evidence": evidence}, ensure_ascii=False)
+        payload = {"query": question, "evidence": evidence}
+        evidence_id, compact, truncated = record_expert_result("knowledge_base", payload, "内部材料")
+        if isinstance(compact, dict):
+            compact["evidence_id"] = evidence_id
+            compact["context_truncated"] = truncated
+        return json.dumps(compact, ensure_ascii=False)
+    except BudgetExceeded as error:
+        return f"内部知识库检索未执行：{error}"
     except Exception as error:
         return f"内部知识库检索失败：{error}"

@@ -25,6 +25,8 @@ from app.api.context import (
     set_thread_context,
 )
 from app.api.monitor import monitor
+from app.context_engineering.runtime import end_run, start_run
+from app.orchestration.parallel_research import parallel_research
 
 # 文件类工具由主智能体直接掌握，负责读取上传附件和生成最终交付文档
 from app.tools.markdown_tools import generate_markdown
@@ -38,7 +40,7 @@ from app.tools.upload_file_read_tool import read_file_content
 main_agent = create_deep_agent(
     model=model,
     system_prompt=main_agent_content["system_prompt"],
-    tools=[generate_markdown, convert_md_to_pdf, read_file_content],
+    tools=[generate_markdown, convert_md_to_pdf, read_file_content, parallel_research],
     checkpointer=InMemorySaver(),
     subagents=[
         database_query_agent,
@@ -94,6 +96,7 @@ async def run_deep_agent(task_query, session_id):
     # ContextVar 让深层工具无需显式传参，也能拿到当前会话目录和 WebSocket thread_id
     session_dir_token = set_session_context(session_dir_str)
     session_id_token = set_thread_context(session_id)
+    budget_token = start_run(session_dir_str)
 
     # 前端拿到工作目录后，可以展示本次任务生成的 Markdown/PDF 等产物
     monitor.report_session_dir(session_dir_str)
@@ -155,6 +158,8 @@ async def run_deep_agent(task_query, session_id):
         # 异步执行异常也走 monitor，保证前端能收到明确错误事件
         monitor._emit("error", f"执行主智能发生异常信息：{str(e)}")
     finally:
+        # 输出可复跑的预算快照；完整工具输入/输出以 trace.jsonl + artifacts 保存于会话目录。
+        monitor._emit("budget_summary", "本轮上下文与专家调用预算已结算", end_run(budget_token))
         # 任务结束后恢复 ContextVar，避免后续请求复用到本次会话目录或 thread_id
         reset_session_context(session_dir_token, session_id_token)
 

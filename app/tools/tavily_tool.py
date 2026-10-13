@@ -13,6 +13,7 @@ from langchain_core.tools import tool
 from tavily import TavilyClient
 
 from app.api.monitor import monitor
+from app.context_engineering.runtime import BudgetExceeded, record_expert_result, reserve_expert_call
 
 load_dotenv()
 
@@ -56,14 +57,20 @@ def internet_search(
     )
 
     try:
+        reserve_expert_call("market_intelligence", query)
         # Tavily 返回 query、results、title、url、content 等结构化字段，后续由子智能体阅读并汇总
-        return _get_tavily_client().search(
+        result = _get_tavily_client().search(
             query=query,
             topic=topic,
             max_results=max_results,
             include_raw_content=include_raw_content,
         )
-    except ValueError as error:
+        evidence_id, compact, truncated = record_expert_result("market_intelligence", result, "公开来源")
+        if isinstance(compact, dict):
+            compact["evidence_id"] = evidence_id
+            compact["context_truncated"] = truncated
+        return compact
+    except (ValueError, BudgetExceeded) as error:
         return str(error)
 
 
